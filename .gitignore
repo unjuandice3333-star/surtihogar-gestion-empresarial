@@ -1,0 +1,74 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+scripts/*_log.txt
+scripts/report_log.txt
+scripts/telegram_bot_log.txt
+scripts/telegram_reports_sent.json
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs & frameworks
+dist/
+dist-ssr/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Mobile Builds & Packages
+*.apk
+*.aab
+android/app/build/
+android/.gradle/
+ios/App/build/
+ios/App/Pods/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Diagnostic, scratch and ad-hoc files
+/scratch/
+/scratch_*.*
+/check_*.*
+/fix_*.*
+/test_auto.cjs
+/test_db.cjs
+/test_update.cjs
+/schedule.cjs
+/schedule.js
+/create_cash_closures_table.sql
+/fix_users_trigger_v2.sql
+*.pdf
+
+# Editor & OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Backups
+*.bak
+*.backup
+*_backup/
+*_backup*/
+
+
