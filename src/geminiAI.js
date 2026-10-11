@@ -55,39 +55,12 @@ export const buildFullAppContext = (state) => {
 };
 
 /**
- * Consulta universal al Asistente de Gemini IA
+ * Función auxiliar para llamadas directas a Gemini (solo si se provee clave manual explícita en runtime)
  */
-export const askGlobalGeminiAssistant = async ({ query, state, apiKey, contextType = 'general' }) => {
-  const key = apiKey || state.geminiApiKey || localStorage.getItem('gemini_api_key') || (import.meta && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || '';
-  if (!key) {
-    throw new Error('Por favor ingresa o configura tu API Key de Google Gemini.');
-  }
-
-  const ctx = buildFullAppContext(state);
-
-  const prompt = `Eres el Asistente Ejecutivo de Inteligencia Artificial (impulsado por Google Gemini) para la empresa SurtiHogar & Baratillo en Colombia.
-Tu función es responder con precisión, empatía profesional y utilidad estratégica a cualquier consulta del administrador o los colaboradores.
-
-DATOS OPERATIVOS EN TIEMPO REAL (${ctx.fecha} ${ctx.hora}):
-- Usuario: ${ctx.usuario} (${ctx.rol}) | Sede actual: ${ctx.sedeActual}
-- Ventas registradas hoy: ${ctx.ventasHoyCount} ventas por $${ctx.ventasHoyTotal.toLocaleString('es-CO')}
-- Gastos registrados hoy: $${ctx.gastosHoyTotal.toLocaleString('es-CO')}
-- Mantenimiento base diario (costos fijos): $137.000 COP/día
-- Resultado neto estimado de hoy (Ventas - Gastos - $137k fijos): $${ctx.utilidadRealHoy.toLocaleString('es-CO')}
-- Catálogo de inventario: ${ctx.totalProductosEnCatalogo} productos
-- Capital total invertido en inventario (a costo): $${ctx.totalInvertidoCosto.toLocaleString('es-CO')}
-- Valor total a precio de venta: $${ctx.totalValorComercialVenta.toLocaleString('es-CO')}
-- Productos con stock crítico/bajo: ${ctx.productosBajoStockCount} artículos
-
-PREGUNTA / SOLICITUD DEL USUARIO:
-"${query}"
-
-Responde de forma clara, concisa (máximo 3 párrafos o viñetas), práctica y con emojis explicativos. Da recomendaciones directas si se requiere.`;
-
+async function callGeminiDirectly(prompt, key) {
   const candidateModels = [
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-1.5-flash',
     'gemini-flash-latest'
   ];
 
@@ -98,7 +71,7 @@ Responde de forma clara, concisa (máximo 3 párrafos o viñetas), práctica y c
     const timeoutId = setTimeout(() => controller.abort(), 9000);
 
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,4 +98,75 @@ Responde de forma clara, concisa (máximo 3 párrafos o viñetas), práctica y c
   }
 
   throw lastError || new Error('No se pudo conectar con los servidores de Gemini IA.');
+}
+
+/**
+ * Consulta universal al Asistente de Gemini IA.
+ * Por arquitectura de seguridad, la solicitud se envía al endpoint seguro de servidor (/api/ai/chat)
+ * donde GEMINI_API_KEY se mantiene aislada y nunca se expone en el cliente.
+ */
+export const askGlobalGeminiAssistant = async ({ query, state, apiKey, contextType = 'general' }) => {
+  const ctx = buildFullAppContext(state);
+
+  const prompt = `Eres el Asistente Ejecutivo de Inteligencia Artificial (impulsado por Google Gemini) para la empresa SurtiHogar & Baratillo en Colombia.
+Tu función es responder con precisión, empatía profesional y utilidad estratégica a cualquier consulta del administrador o los colaboradores.
+
+DATOS OPERATIVOS EN TIEMPO REAL (${ctx.fecha} ${ctx.hora}):
+- Usuario: ${ctx.usuario} (${ctx.rol}) | Sede actual: ${ctx.sedeActual}
+- Ventas registradas hoy: ${ctx.ventasHoyCount} ventas por $${ctx.ventasHoyTotal.toLocaleString('es-CO')}
+- Gastos registrados hoy: $${ctx.gastosHoyTotal.toLocaleString('es-CO')}
+- Mantenimiento base diario (costos fijos): $137.000 COP/día
+- Resultado neto estimado de hoy (Ventas - Gastos - $137k fijos): $${ctx.utilidadRealHoy.toLocaleString('es-CO')}
+- Catálogo de inventario: ${ctx.totalProductosEnCatalogo} productos
+- Capital total invertido en inventario (a costo): $${ctx.totalInvertidoCosto.toLocaleString('es-CO')}
+- Valor total a precio de venta: $${ctx.totalValorComercialVenta.toLocaleString('es-CO')}
+- Productos con stock crítico/bajo: ${ctx.productosBajoStockCount} artículos
+
+PREGUNTA / SOLICITUD DEL USUARIO:
+"${query}"
+
+Responde de forma clara, concisa (máximo 3 párrafos o viñetas), práctica y con emojis explicativos. Da recomendaciones directas si se requiere.`;
+
+  // 1. Si el usuario o desarrollador ingresó una clave manual en la interfaz para pruebas, usar llamada directa
+  const manualKey = apiKey || state.geminiApiKey || (typeof localStorage !== 'undefined' ? localStorage.getItem('gemini_api_key') : '');
+  if (manualKey) {
+    return callGeminiDirectly(prompt, manualKey);
+  }
+
+  // 2. Ruta de producción/segura: Backend Proxy en Node.js (la clave reside exclusivamente en el servidor)
+  const rawBase = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+    ? import.meta.env.VITE_API_URL
+    : 'http://localhost:3000';
+  const serverBase = String(rawBase).replace(/\/+$/, '');
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(`${serverBase}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.text) return data.text;
+    }
+
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error || `Error en el servicio de IA (HTTP ${response.status})`);
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('La consulta al servicio de IA superó el tiempo límite de espera.');
+    }
+    if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError') || err.message.includes('ECONNREFUSED'))) {
+      throw new Error('El microservicio backend no está en ejecución. Inicia el servidor (`npm start`) con GEMINI_API_KEY configurada, o ingresa una clave temporal en la interfaz.');
+    }
+    throw err;
+  }
 };

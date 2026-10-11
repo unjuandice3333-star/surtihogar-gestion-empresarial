@@ -211,4 +211,24 @@ describe('FASE 2: Verificación de Seguridad Crítica', () => {
     });
   });
 
+  describe('7. Protección de la API de Google Gemini (Aislamiento en Servidor)', () => {
+    it('CLIENTE: src/geminiAI.js no debe contener referencias a VITE_GEMINI_API_KEY', () => {
+      const geminiSrc = fs.readFileSync(path.resolve('src/geminiAI.js'), 'utf-8');
+      expect(geminiSrc.includes('VITE_GEMINI_API_KEY')).toBe(false);
+    });
+
+    it('CLIENTE: src/inventoryAI.js no debe contener referencias a VITE_GEMINI_API_KEY', () => {
+      const invAiSrc = fs.readFileSync(path.resolve('src/inventoryAI.js'), 'utf-8');
+      expect(invAiSrc.includes('VITE_GEMINI_API_KEY')).toBe(false);
+    });
+
+    it('SERVIDOR: scripts/server.js debe contar con proxy seguro /api/ai/chat con rate limiting', () => {
+      const serverSrc = fs.readFileSync(path.resolve('scripts/server.js'), 'utf-8');
+      expect(serverSrc.includes('/api/ai/chat')).toBe(true);
+      expect(serverSrc.includes('GEMINI_API_KEY')).toBe(true);
+      expect(serverSrc.includes('aiRateLimitMap')).toBe(true);
+      expect(serverSrc.includes('checkAiRateLimit')).toBe(true);
+    });
+  });
+
 });

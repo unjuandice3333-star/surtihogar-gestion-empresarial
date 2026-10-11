@@ -55,6 +55,17 @@ const RlsEvaluator = {
     return log.user_id === authUid && !reserved.includes(log.type);
   },
 
+  // --- BUSINESSES (Aislamiento de Sedes) ---
+  canSelectBusiness: (authUid, business) => {
+    if (!authUid) return false;
+    if (is_admin(authUid)) return true;
+    return business.id === get_current_user_business_id(authUid);
+  },
+  canModifyBusiness: (authUid) => {
+    if (!authUid) return false;
+    return is_admin(authUid);
+  },
+
   // --- PRODUCTS (Catálogo POS para Clúster) ---
   canSelectProduct: (authUid, product) => {
     // Lectura abierta para todo usuario autenticado para poder vender en POS
@@ -303,6 +314,28 @@ describe('Validación Funcional RLS Corregida (Local Simulation)', () => {
     // Intento de registrar cierre por colaborador inactivo -> Denegado en RLS
     const closure = { id: 'close-inactive', user_id: INACTIVE_EMP_ID, business_id: BIZ1_ID };
     expect(RlsEvaluator.canInsertCashClosure(INACTIVE_EMP_ID, closure)).toBe(false);
+  });
+
+  it('8. Aislamiento Multi-Tenant de Sedes (businesses): Empleados solo leen su negocio y no pueden mutar sedes', () => {
+    const biz1 = { id: BIZ1_ID, name: 'SurtiHogar Sede 1' };
+    const biz2 = { id: BIZ2_ID, name: 'SurtiHogar Sede 2' };
+
+    // SELECT: Empleado de Sede 1 solo puede consultar su propia sede
+    expect(RlsEvaluator.canSelectBusiness(EMP1_ID, biz1)).toBe(true);
+    expect(RlsEvaluator.canSelectBusiness(EMP1_ID, biz2)).toBe(false);
+
+    // SELECT: Administrador consulta todas las sedes
+    expect(RlsEvaluator.canSelectBusiness(ADMIN_ID, biz1)).toBe(true);
+    expect(RlsEvaluator.canSelectBusiness(ADMIN_ID, biz2)).toBe(true);
+
+    // SELECT: Usuario inactivo no puede consultar sedes
+    expect(RlsEvaluator.canSelectBusiness(INACTIVE_EMP_ID, biz1)).toBe(false);
+
+    // MUTACIÓN: Empleado no puede insertar, actualizar ni borrar sedes ajenas o propias
+    expect(RlsEvaluator.canModifyBusiness(EMP1_ID)).toBe(false);
+
+    // MUTACIÓN: Administrador tiene autorización completa de gestión de sedes
+    expect(RlsEvaluator.canModifyBusiness(ADMIN_ID)).toBe(true);
   });
 
 });

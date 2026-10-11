@@ -123,6 +123,42 @@ WITH CHECK (public.is_admin());
 
 
 -- ==============================================================================
+-- SECCIÓN 1.5: businesses (Sedes de Negocio — Aislamiento Multi-Tenant)
+-- ==============================================================================
+ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins see all businesses" ON public.businesses;
+DROP POLICY IF EXISTS "Employees see their business" ON public.businesses;
+DROP POLICY IF EXISTS "Admins view all businesses" ON public.businesses;
+DROP POLICY IF EXISTS "Employees view own business" ON public.businesses;
+DROP POLICY IF EXISTS "Only admins insert businesses" ON public.businesses;
+DROP POLICY IF EXISTS "Only admins update businesses" ON public.businesses;
+DROP POLICY IF EXISTS "Only admins delete businesses" ON public.businesses;
+
+-- 1.5.1 LECTURA: Administradores consultan todas las sedes; empleados consultan su sede asignada activa
+CREATE POLICY "Admins view all businesses" ON public.businesses
+FOR SELECT TO authenticated
+USING (public.is_admin());
+
+CREATE POLICY "Employees view own business" ON public.businesses
+FOR SELECT TO authenticated
+USING (id = public.get_current_user_business_id());
+
+-- 1.5.2 MODIFICACIÓN Y BORRADO: Estrictamente restringido a Administradores
+CREATE POLICY "Only admins insert businesses" ON public.businesses
+FOR INSERT TO authenticated
+WITH CHECK (public.is_admin());
+
+CREATE POLICY "Only admins update businesses" ON public.businesses
+FOR UPDATE TO authenticated
+USING (public.is_admin());
+
+CREATE POLICY "Only admins delete businesses" ON public.businesses
+FOR DELETE TO authenticated
+USING (public.is_admin());
+
+
+-- ==============================================================================
 -- SECCIÓN 2: products (Catálogo e Inventario)
 -- ==============================================================================
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
@@ -518,6 +554,20 @@ USING (EXISTS (SELECT 1 FROM public.users WHERE users.id = auth.uid() AND users.
 
 CREATE POLICY "Users can insert logs" ON public.system_logs FOR INSERT 
 WITH CHECK (auth.uid() IS NOT NULL);
+
+-- 8.2.1 ROLLBACK businesses (Restaura políticas originales de 20260427_initial_schema.sql)
+ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Admins view all businesses" ON public.businesses;
+DROP POLICY IF EXISTS "Employees view own business" ON public.businesses;
+DROP POLICY IF EXISTS "Only admins insert businesses" ON public.businesses;
+DROP POLICY IF EXISTS "Only admins update businesses" ON public.businesses;
+DROP POLICY IF EXISTS "Only admins delete businesses" ON public.businesses;
+
+CREATE POLICY "Admins see all businesses" ON public.businesses FOR SELECT
+USING (EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND role = 'admin'));
+
+CREATE POLICY "Employees see their business" ON public.businesses FOR SELECT
+USING (EXISTS (SELECT 1 FROM public.users WHERE id = auth.uid() AND business_id = id));
 
 -- 8.3 ROLLBACK products
 -- [ADVERTENCIA DE SEGURIDAD CRÍTICA]: En el esquema base v1 (20260427_initial_schema.sql),

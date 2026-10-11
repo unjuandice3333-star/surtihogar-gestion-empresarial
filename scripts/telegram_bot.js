@@ -8,7 +8,7 @@ dotenv.config({ path: envPath });
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
-const geminiApiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY || null;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error("❌ Error: No se encontraron las credenciales de Supabase en el archivo .env");

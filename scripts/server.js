@@ -1,5 +1,8 @@
 import express from 'express';
 import cron from 'node-cron';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { 
   loadTelegramConfig, 
   botToken, 
@@ -10,15 +13,185 @@ import {
 import { runDailyReport } from './send_daily_report.js';
 import { runMonthlyReport } from './send_monthly_report.js';
 
+// Cargar variables de entorno del servidor de forma explícita
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
 const app = express();
-app.use(express.json());
+
+// Habilitar trust proxy para extraer la IP real del cliente detrás de proxies inversos (Render / Cloudflare)
+app.set('trust proxy', 1);
+
+// Middleware de seguridad y control de tamaño de carga
+app.use(express.json({ limit: '100kb' }));
+
+// Lista de orígenes autorizados para CORS (desarrollo local, contenedor y empaquetado móvil Capacitor)
+const defaultAllowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'capacitor://localhost',
+  'https://localhost'
+];
+
+const customOrigins = process.env.CORS_ALLOWED_ORIGINS
+  ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : [];
+
+const allowedOrigins = [...defaultAllowedOrigins, ...customOrigins];
+
+// Middleware CORS restringido: valida el encabezado Origin y previene consumo arbitrario desde cualquier web no autorizada
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin) {
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    } else {
+      if (req.method === 'OPTIONS') {
+        return res.status(403).json({ error: 'Origen no autorizado por política CORS' });
+      }
+    }
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 const PORT = process.env.PORT || 3000;
 
-// Endpoint de salud para pings / mantener activo el bot gratis
+/**
+ * Control de frecuencia (Rate Limiting) en memoria por dirección IP.
+ * Límite: Máximo 15 peticiones por minuto por IP para llamadas de IA.
+ *
+ * ⚠️ NOTA TÉCNICA DE ARQUITECTURA:
+ * Este limitador opera a nivel de instancia local única (in-memory process).
+ * No proporciona protección distribuida en clústeres multi-nodo o funciones serverless.
+ * Para escalamiento horizontal en producción se requeriría un almacén compartido como Redis.
+ */
+const aiRateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MAX_AI_REQUESTS_PER_WINDOW = 15;
+
+function checkAiRateLimit(ip) {
+  const now = Date.now();
+  const record = aiRateLimitMap.get(ip) || { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  if (now > record.resetAt) {
+    record.count = 1;
+    record.resetAt = now + RATE_LIMIT_WINDOW_MS;
+    aiRateLimitMap.set(ip, record);
+    return true;
+  }
+  if (record.count >= MAX_AI_REQUESTS_PER_WINDOW) {
+    return false;
+  }
+  record.count++;
+  aiRateLimitMap.set(ip, record);
+  return true;
+}
+
+// Limpieza periódica cada 5 minutos de registros expirados de rate limit
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, record] of aiRateLimitMap.entries()) {
+    if (now > record.resetAt) aiRateLimitMap.delete(ip);
+  }
+}, 5 * 60 * 1000);
+
+// Endpoint de salud para pings / mantener activo el bot
 app.get('/', (req, res) => {
   res.send('🤖 J&M Telegram Bot & Scheduler is active!');
 });
+
+// Endpoint seguro de proxy para Google Gemini IA
+// La clave de API (GEMINI_API_KEY) reside y se utiliza EXCLUSIVAMENTE en el servidor.
+app.post('/api/ai/chat', async (req, res) => {
+  const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+
+  // 1. Control de frecuencia (Abuse Protection)
+  if (!checkAiRateLimit(clientIp)) {
+    return res.status(429).json({
+      error: 'Límite de solicitudes de IA excedido (máximo 15 consultas por minuto). Por favor espera un momento.'
+    });
+  }
+
+  // 2. Validación estricta de entrada
+  const { prompt } = req.body || {};
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return res.status(400).json({
+      error: 'El parámetro prompt es obligatorio y debe ser una cadena de texto válida.'
+    });
+  }
+
+  if (prompt.length > 6000) {
+    return res.status(400).json({
+      error: 'La consulta excede la longitud máxima permitida (6.000 caracteres).'
+    });
+  }
+
+  // 3. Verificación de credencial en variables de entorno del servidor
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({
+      error: 'El servicio de IA no está configurado en el servidor (GEMINI_API_KEY no definida en variables de entorno).'
+    });
+  }
+
+  // 4. Invocación segura a Google Gemini (sin exponer la clave en errores ni logs)
+  const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-1.5-flash',
+    'gemini-flash-latest'
+  ];
+
+  let lastErrorMessage = null;
+
+  for (const model of candidateModels) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          return res.json({ text });
+        }
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        // Sanitizar el mensaje de error para evitar reflejar la clave o parámetros de URL
+        lastErrorMessage = errData.error?.message || `HTTP ${response.status}`;
+      }
+    } catch (e) {
+      clearTimeout(timeoutId);
+      lastErrorMessage = e.name === 'AbortError' ? 'Tiempo de espera agotado (timeout de 10s)' : 'Error de conexión con el proveedor';
+    }
+  }
+
+  console.error("🔒 Proxy Gemini IA: Error de llamada:", lastErrorMessage);
+  return res.status(502).json({
+    error: 'No se pudo obtener respuesta del servicio de IA en este momento.'
+  });
+});
+
 
 // Endpoint de Webhook para Telegram (con validación obligatoria X-Telegram-Bot-Api-Secret-Token)
 app.post('/webhook', async (req, res) => {

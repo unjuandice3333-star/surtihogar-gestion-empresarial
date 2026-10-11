@@ -214,14 +214,10 @@ export const generateSupplierOrderText = (replenishmentOrders = [], businessName
 };
 
 /**
- * Llama a la API oficial de Google Gemini (con reintentos automáticos multi-modelo y timeout seguro de 9s)
+ * Llama a la API de Google Gemini para generar el diagnóstico predictivo.
+ * Por defecto, delega la consulta al backend seguro (/api/ai/chat) para no exponer GEMINI_API_KEY en el cliente.
  */
 export const fetchGeminiInventoryAnalysis = async ({ analysis, businessName, apiKey, onStatusUpdate }) => {
-  const key = apiKey || (import.meta && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || '';
-  if (!key) {
-    throw new Error('Ingresa tu API Key de Google AI Studio / Gemini para generar el diagnóstico predictivo.');
-  }
-
   const prompt = `Eres un consultor experto en optimización financiera e inventarios para la cadena SurtiHogar / Baratillo en Colombia.
 Analiza con máxima veracidad los siguientes datos operativos en tiempo real y redacta un diagnóstico ejecutivo breve (máximo 4 párrafos cortos o viñetas), directo, profesional y en español:
 
@@ -249,51 +245,89 @@ Entrega:
 2. 💡 Estrategia para mover el capital estancado real (combos/promociones).
 3. 📦 Prioridad de Reabastecimiento.`;
 
-  const candidateModels = [
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-flash-lite-latest',
-    'gemini-flash-latest'
-  ];
+  // 1. Si se proporciona una clave manual en runtime (pruebas locales o usuario que ingresa su clave personal)
+  const manualKey = apiKey || (typeof localStorage !== 'undefined' ? localStorage.getItem('gemini_api_key') : '');
+  if (manualKey) {
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-1.5-flash',
+      'gemini-flash-latest'
+    ];
 
-  let lastError = null;
+    let lastError = null;
 
-  for (const model of candidateModels) {
-    if (onStatusUpdate) onStatusUpdate(`⚡ Conectando con Gemini IA (${model})...`);
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 9000); // Timeout seguro de 9s
+    for (const model of candidateModels) {
+      if (onStatusUpdate) onStatusUpdate(`⚡ Conectando con Gemini IA (${model})...`);
 
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        }),
-        signal: controller.signal
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 9000);
 
-      clearTimeout(timeoutId);
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(manualKey)}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }]
+          }),
+          signal: controller.signal
+        });
 
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
-      } else {
-        const errData = await response.json().catch(() => ({}));
-        lastError = new Error(errData.error?.message || `Error HTTP ${response.status}`);
-        console.warn(`Modelo ${model} retornó estado ${response.status}, reintentando...`);
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) return text;
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          lastError = new Error(errData.error?.message || `Error HTTP ${response.status}`);
+        }
+      } catch (e) {
+        clearTimeout(timeoutId);
+        lastError = e.name === 'AbortError' ? new Error(`Tiempo de respuesta agotado (9s)`) : e;
       }
-    } catch (e) {
-      clearTimeout(timeoutId);
-      const isTimeout = e.name === 'AbortError';
-      lastError = isTimeout ? new Error(`Tiempo de respuesta agotado (9s) en modelo ${model}`) : e;
-      console.warn(`Falló llamada a ${model}:`, e.message);
     }
+
+    throw lastError || new Error('No se pudo obtener respuesta directa de Google Gemini.');
   }
 
-  throw lastError || new Error('No se pudo obtener respuesta de los servidores de Google Gemini. Reintenta en unos segundos.');
+  // 2. Ruta estándar y segura: Proxy de backend (la clave reside en el servidor)
+  if (onStatusUpdate) onStatusUpdate('⚡ Consultando servicio de IA en servidor...');
+
+  const rawBase = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL)
+    ? import.meta.env.VITE_API_URL
+    : 'http://localhost:3000';
+  const serverBase = String(rawBase).replace(/\/+$/, '');
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(`${serverBase}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.text) return data.text;
+    }
+
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error || `Error del servidor de IA (HTTP ${response.status})`);
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('La consulta al servicio de IA superó el tiempo límite.');
+    }
+    if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError') || err.message.includes('ECONNREFUSED'))) {
+      throw new Error('El microservicio backend no está en ejecución. Inicia el servidor (`npm start`) con GEMINI_API_KEY configurada, o ingresa una clave personal en la interfaz.');
+    }
+    throw err;
+  }
 };
