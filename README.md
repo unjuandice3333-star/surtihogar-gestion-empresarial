@@ -329,7 +329,7 @@ PORT=3000
 
 ## 12. Autor y Objetivo del Proyecto como Portafolio
 
-Este proyecto fue desarrollado con propósitos formativos y de demostración técnica para candidaturas a puestos de **Desarrollador de Software Junior (Full Stack)**.
+Este proyecto fue desarrollado con propósitos comerciales y de demostración técnica para candidaturas a puestos de **Desarrollador de Software Junior (Full Stack)**.
 
 Refleja competencias prácticas en:
 - Modelado relacional y seguridad a nivel de base de datos con PostgreSQL y Supabase.
