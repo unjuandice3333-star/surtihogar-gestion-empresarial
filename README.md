@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/License-MIT%20%2F%20Portfolio-blue.svg)](#12-autor-y-objetivo-del-proyecto-como-portafolio)
 
 > **Nota de Portafolio Profesional:**
-> SurtiHogar es un sistema de gestión empresarial orientado a centralizar operaciones de punto de venta, inventario, gastos, seguimiento financiero y administración multi-negocio. El proyecto incorpora herramientas de análisis, automatización y control de acceso para apoyar la gestión operativa. Desarrollado como proyecto de portafolio Full Stack para demostrar modelado relacional en PostgreSQL con Row-Level Security (RLS), diseño de microservicios con Node.js y construcción de aplicaciones SPA reactivas. No representa un producto comercial con usuarios activos ni se encuentra desplegado en producción comercial.
+> SurtiHogar es un sistema de gestión empresarial orientado a centralizar operaciones de punto de venta, inventario, gastos, seguimiento financiero y administración multi-negocio. El proyecto incorpora herramientas de análisis, automatización y control de acceso para apoyar la gestión operativa. Desarrollado como proyecto de portafolio Full Stack para demostrar modelado relacional en PostgreSQL con Row-Level Security (RLS), diseño de microservicios con Node.js y construcción de aplicaciones SPA reactivas. este representa un producto comercial con usuarios activos y se encuentra desplegado en producción comercial, sin estar publicado en plataformas, es un proyecto de uso privado. desarrollado a medida para un cliente.
 
 ---
 
